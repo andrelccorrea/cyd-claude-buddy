@@ -26,14 +26,14 @@ Hooks exit silently when buddyd is not running, so Claude Code is unaffected.
 
 ## Firmware
 
-`firmware/` is the fork with two local changes: the panel config for the TPM408-2.8
-glass this board shipped with (`board_configs/esp32-2432s028r/LGFX_Config.hpp`: 320x240,
+`firmware/` is the fork (branch `tpm408-panel-and-wifi`, upstream PR alinke/claude-desktop-buddy-esp32#1) with two changes: the panel config for the TPM408-2.8
+glass this board shipped with (env `cyd-tpm408`, `board_configs/esp32-2432s028r-tpm408/`: 320x240,
 `offset_rotation = 7`, RGB) and a Wi-Fi bridge (`src/net_bridge.*`). Build and flash:
 
 ```
 export PLATFORMIO_CORE_DIR=$PWD/.platformio
-cd firmware && ../.venv/bin/pio run -e cyd
-../.venv/bin/esptool --chip esp32 --port /dev/cu.usbserial-XXXX --baud 460800 write-flash 0x0 .pio/build/cyd/firmware.factory.bin
+cd firmware && ../.venv/bin/pio run -e cyd-tpm408
+../.venv/bin/esptool --chip esp32 --port /dev/cu.usbserial-XXXX --baud 460800 write-flash 0x0 .pio/build/cyd-tpm408/firmware.factory.bin
 ```
 
 Plug the board straight into the Mac: behind a USB hub it browns out when the radio starts.
