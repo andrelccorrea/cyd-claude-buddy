@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Start, stop and inspect buddyd.
+#
+#   buddyctl start [buddyd options]   e.g. buddyctl start --approvals
+#   buddyctl stop | restart [options] | status | log
+#   buddyctl wifi-setup --ssid NAME   put the board on Wi-Fi (over USB)
+#   buddyctl wifi-forget              back to USB/BLE only
+#
+# The options of the last start are remembered, so a bare restart keeps them.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE="$HOME/.cache/cyd-buddy"
+PID="$STATE/buddyd.pid"
+LOG="$STATE/buddyd.log"
+ARGS="$STATE/buddyd.args"
+mkdir -p "$STATE"
+
+running() { [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null; }
+
+start() {
+  if running; then echo "buddyd already running (pid $(cat "$PID"))"; return; fi
+  printf '%s\n' "$@" > "$ARGS"
+  nohup "$HERE/.venv/bin/python" "$HERE/buddyd.py" "$@" >> "$LOG" 2>&1 &
+  echo $! > "$PID"
+  sleep 2
+  if running; then echo "buddyd started (pid $(cat "$PID")) $*"; tail -n 2 "$LOG"
+  else echo "buddyd failed to start:"; tail -n 20 "$LOG"; rm -f "$PID"; exit 1; fi
+}
+
+stop() {
+  if ! running; then echo "buddyd not running"; rm -f "$PID"; return; fi
+  kill "$(cat "$PID")"
+  rm -f "$PID"
+  echo "buddyd stopped"
+}
+
+case "${1:-status}" in
+  start)   shift; start "$@" ;;
+  stop)    stop ;;
+  restart) shift
+           if [ $# -eq 0 ] && [ -s "$ARGS" ]; then set -- $(cat "$ARGS"); fi
+           stop; start "$@" ;;
+  status)  if running; then echo "buddyd running (pid $(cat "$PID")) $(tr '\n' ' ' < "$ARGS" 2>/dev/null)"; tail -n 3 "$LOG"
+           else echo "buddyd not running"; fi ;;
+  log)     tail -n 50 -f "$LOG" ;;
+  wifi-setup)  shift; stop; "$HERE/.venv/bin/python" "$HERE/wifi_setup.py" "$@" ;;
+  wifi-forget) stop; "$HERE/.venv/bin/python" "$HERE/wifi_setup.py" --forget ;;
+  *)       sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

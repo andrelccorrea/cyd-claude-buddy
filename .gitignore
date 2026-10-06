@@ -1,0 +1,7 @@
+.venv/
+.platformio/
+__pycache__/
+*.log
+screenshot.png
+# The patched firmware is its own git repository (fork branch tpm408-panel-and-wifi).
+firmware/
