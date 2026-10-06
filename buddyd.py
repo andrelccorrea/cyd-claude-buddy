@@ -37,6 +37,8 @@ HINT_CHARS = 43
 ENTRY_CHARS = 80
 MAX_ENTRIES = 6
 PROMPT_ID_CHARS = 39
+MAX_STATUS_SESSIONS = 5  # TamaState::MAX_SESS
+STATUS_FIELDS = ("name", "branch", "model", "effort", "ctx_pct", "ctx_tokens", "ctx_size", "duration_ms")
 TURN_TEXT_CHARS = 600
 NET_PORT = 7777
 WIFI_CONFIG = os.path.expanduser("~/.config/cyd-buddy/wifi.json")
@@ -89,6 +91,7 @@ class Bridge:
         self.today = datetime.date.today()
         self.transcripts = {}  # path -> (offset, set of counted message ids)
         self.turn = None
+        self.limits = (None, None)  # account rate limits (5h, 7d), percent
         self.link = None
         self.last_error = None
 
@@ -107,6 +110,18 @@ class Bridge:
             s = self.sessions.setdefault(sid, {"project": "", "state": "idle", "last": 0})
             s["project"] = os.path.basename(ev.get("cwd") or "") or s["project"]
             s["last"] = time.time()
+            if name == "StatusLine":
+                # Fires on every status line refresh; only a visible change
+                # is worth a frame on the device.
+                before = (s.get("status"), self.limits)
+                s["status"] = {k: ev.get(k) for k in STATUS_FIELDS}
+                self.limits = tuple(
+                    round(ev[k]) if ev.get(k) is not None else old
+                    for k, old in zip(("rl_5h", "rl_7d"), self.limits)
+                )
+                if (s["status"], self.limits) != before:
+                    self.changed.set()
+                return None
             # Async hooks arrive out of order, so only events that settle a
             # prompt clear it: its own tool finishing, a tool finishing well
             # after it was asked (it was denied in the terminal), or the turn
@@ -199,6 +214,35 @@ class Bridge:
             p.done.set()
             self.changed.set()
 
+    def _status_line(self):
+        """{"evt":"status"} with per-session detail, most urgent first."""
+        if not any("status" in s for s in self.sessions.values()) and self.limits == (None, None):
+            return None
+        order = {"waiting": 0, "running": 1, "idle": 2}
+        rows = []
+        for s in sorted(self.sessions.values(), key=lambda s: (order[s["state"]], -s["last"])):
+            st = s.get("status") or {}
+            tokens = ""
+            if st.get("ctx_tokens") is not None and st.get("ctx_size"):
+                tokens = f"{round(st['ctx_tokens'] / 1000)}k/{round(st['ctx_size'] / 1000)}k"
+            rows.append({
+                "n": ascii_line(st.get("name") or s["project"], 16),
+                "b": ascii_line(st.get("branch") or "", 12),
+                "m": ascii_line(st.get("model") or "", 14),
+                "e": ascii_line(st.get("effort") or "", 6),
+                "k": tokens,
+                "c": round(st.get("ctx_pct") or 0),
+                "d": round((st.get("duration_ms") or 0) / 60000),
+                "s": s["state"][0],
+            })
+        msg = {"evt": "status", "sessions": rows[:MAX_STATUS_SESSIONS],
+               "rl": [-1 if v is None else v for v in self.limits]}
+        line = json.dumps(msg)
+        while len(line.encode()) > MAX_LINE_BYTES and msg["sessions"]:
+            msg["sessions"].pop()
+            line = json.dumps(msg)
+        return line
+
     def link_error(self, err):
         """Log each distinct connection failure once, not every retry."""
         if err != self.last_error:
@@ -246,11 +290,12 @@ class Bridge:
             else:
                 snap["msg"] = "idle" if states else "no sessions"
             turn, self.turn = self.turn, None
+            status = self._status_line()
         line = json.dumps(snap)
         while len(line.encode()) > MAX_LINE_BYTES and snap["entries"]:
             snap["entries"].pop()
             line = json.dumps(snap)
-        lines = [line]
+        lines = [line] + ([status] if status else [])
         if turn:
             text = ascii_line(redact(turn), TURN_TEXT_CHARS)
             lines.append(json.dumps({"evt": "turn", "role": "assistant", "content": [{"type": "text", "text": text}]}))

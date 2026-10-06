@@ -33,7 +33,10 @@ glass this board shipped with (env `cyd-tpm408`, `board_configs/esp32-2432s028r-
 ```
 export PLATFORMIO_CORE_DIR=$PWD/.platformio
 cd firmware && ../.venv/bin/pio run -e cyd-tpm408
+# first install (blank board): the full image
 ../.venv/bin/esptool --chip esp32 --port /dev/cu.usbserial-XXXX --baud 460800 write-flash 0x0 .pio/build/cyd-tpm408/firmware.factory.bin
+# updates: the app only; the full image blanks NVS (Wi-Fi setup, touch calibration)
+../.venv/bin/esptool --chip esp32 --port /dev/cu.usbserial-XXXX --baud 460800 write-flash 0x10000 .pio/build/cyd-tpm408/firmware.bin
 ```
 
 Plug the board straight into the Mac: behind a USB hub it browns out when the radio starts.
@@ -58,6 +61,23 @@ PermissionRequest. The terminal prompt appears only after the hook returns, so i
 up after `--wait` seconds without a tap (keep it under 60). A missing tap, a
 disconnected board or a stopped daemon never approves anything.
 
+## Status line data
+
+Model, effort, context use, session time and the 5h/7d rate limits only reach the status
+line command, not hooks. To mirror them on the board (home screen limits and the SESSIONS
+info page), add this right after the status line script reads its input:
+
+```bash
+input=$(cat)
+buddy="$HOME/path/to/cyd-claude-buddy"
+if [ -S "$HOME/.cache/cyd-buddy/buddy.sock" ]; then
+  printf '%s' "$input" | "$buddy/.venv/bin/python" "$buddy/buddy_hook.py" --statusline >/dev/null 2>&1 &
+fi
+```
+
+The forwarder detaches itself, so Claude Code cancelling a stale status line run doesn't
+lose the update. Cost is deliberately not sent.
+
 ## What is shown
 
 | Device field | Source |
@@ -65,4 +85,5 @@ disconnected board or a stopped daemon never approves anything.
 | sessions / running / waiting | SessionStart, UserPromptSubmit, Stop, SessionEnd, PermissionRequest |
 | recent entries | PreToolUse (secrets like `password=` are masked) |
 | last reply | `last_assistant_message` from Stop |
+| per-session repo, branch, model, effort, context, time; 5h/7d limits | status line JSON |
 | tokens / today | output tokens read from the session transcripts |
